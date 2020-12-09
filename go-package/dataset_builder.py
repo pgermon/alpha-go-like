@@ -61,29 +61,174 @@ def build_dataset(data, board_size):
         
         # Détermine la couleur des joueurs ami et ennemi
         if data[i]['depth'] % 2 == 0:
-            ami = 'black_stones'
-            ennemi = 'white_stones'
+            friend = 'black_stones'
+            enemy = 'white_stones'
         else:
-            ami = 'white_stones'
-            ennemi = 'black_stones'
+            friend = 'white_stones'
+            enemy = 'black_stones'
             
         # Map 0 : 1 si pierre du joueur ami, 0 sinon
-        for stone in data[i][ami]:
+        for stone in data[i][friend]:
             (col, lin) = Goban.Board.name_to_coord(stone)
             X[i][0][col][lin] = 1
 
         # Map 1 : 1 si pierre du joueur ennemi, 0 sinon
-        for stone in data[i][ennemi]:
+        for stone in data[i][enemy]:
             (col, lin) = Goban.Board.name_to_coord(stone)
             X[i][1][col][lin] = 1
             
         # Map 2 : 1 si le joueur ami est 'black', 0 sinon
-        if ami == 'black_stones':
+        if friend == 'black_stones':
             for col in range(board_size):
                 for lin in range(board_size):
                     X[i][2][col][lin] = 1
                     
     return X
+
+
+# Construit un goban à partir de la liste de moves spécifiée
+def build_goban_from_moves(moves):
+    
+    board = Goban.Board()
+    valid = True
+    
+    for move in moves:
+        
+        coord = Goban.Board.name_to_coord(move)
+        
+        # Vérifie que le push du move ne crée pas d'erreur (ex: jouer dans un oeil)
+        try:
+            board.push(Goban.Board.flatten(coord))
+        except KeyError:
+            valid = False
+            break
+    
+    return valid, board
+
+# On construit les goban correspondant à chaque sample
+def build_all_gobans(data):
+    boards = []
+
+    for i in range(len(data)):
+
+        valid, board = build_goban_from_moves(data[i]['list_of_moves'])
+        
+        # Ajoute le board obtenu seulement s'il est valide
+        if valid:
+            boards.append({"board" : board, "index" : i})
+            
+    return boards
+
+
+# Construit les features maps des pierres noires et blanches à partir du board spécifié
+def buid_features_maps_from_board(board):
+    
+    blacks = np.zeros((board._BOARDSIZE, board._BOARDSIZE), dtype = 'int8')
+    whites = np.zeros((board._BOARDSIZE, board._BOARDSIZE), dtype = 'int8')
+    
+    for fcoord in range(len(board._board)):
+        
+        (col, lin) = Goban.Board.unflatten(fccord)
+        
+        if board._board[fcoord] == Goban.Board._BLACK:
+            
+            blacks[col][lin] = 1
+            
+        elif board._board[fcoord] == Goban.Board._WHITE:
+            
+            whites[col][lin] = 1
+        
+    return blacks, whites
+
+
+# Construit les features maps ami et ennemi de l'historique (7 derniers boards) d'un sample
+def build_sample_history(sample, board_size):
+    
+    moves = sample['list_of_moves']
+    depth = sample['depth']
+    
+    # Détermine la couleur des joueurs ami et ennemi
+    if depth % 2 == 0:
+        friend = 'black_stones'
+        enemy = 'white_stones'
+    else:
+        friend = 'white_stones'
+        enemy = 'black_stones'
+    
+    # Les 15 features maps de l'historique du sample:
+    # - pour les 7 derniers boards : - map n = pierres ami
+    #                                - map n+1 = pierres ennemi
+    # - map 14 : 1 si ami est noir, 0 sinon
+    features_maps = np.zeros((1, 15, board_size, board_size), dtype = 'int8')
+    
+    # Maps 0-1 : Board courant, n = 0
+    valid, board = build_goban_from_moves(moves)
+    
+    if not valid:
+        return False, _
+    
+    blacks, whites = build_features_maps_from_board(current_board)
+    
+    if friend == 'black_stones':
+        features_maps[0][0] = blacks
+        fetures_maps[0][1] = whites
+    else:
+        features_maps[0][0] = whites
+        features_maps[0][1] = blacks
+        
+    n = 2
+    
+    # Maps 2-13 : 6 derniers boards
+    for h in range(1, min(7, depth)):
+        valid, board = build_goban_from_moves(moves[:-h])
+        
+        if not valid:
+            return False, _
+        
+        blacks, whites = build_features_maps_from_board(board)
+        
+        if friend == 'black_stones':
+            features_maps[0][n] = blacks
+            fetures_maps[0][n+1] = whites
+        else:
+            features_maps[0][n] = whites
+            features_maps[0][n+1] = blacks
+            
+        n += 2
+        
+    # Map 14 : 1 si le joueur ami est 'black', 0 sinon
+    if friend == 'black_stones':
+        features_maps[0][14] = np.ones((board_size, board_size), dtype = 'int8')
+        
+    return True, features_maps
+        
+        
+    
+# Construit le dataset avec les boards de l'historique pour chaque sample  
+def build_dataset_history(data, board_size):
+    
+    N_EXAMPLES = len(data)
+    
+    boards = build_all_gobans(data)
+    
+    # 15 feature maps :
+    #   - pour n dans [0, 2, 4, 6, 8, 10, 12] :
+    #      - Map n : pierres du joueur ami
+    #      - Map n+1 : pierres du joueur ennemi
+    #   - Map 14 : 1 si ami est noir, 0 sinon
+    
+    X = np.empty()
+    
+    for i in range(N_EXAMPLES):
+        
+        valid, sample = build_sample_history(data[i] board_size)
+        if valid:
+            X = np.append(X, sample, axis = 0)
+                    
+    return X            
+            
+        
+
     
 def get_winning_priors(data):
     
@@ -100,29 +245,7 @@ def get_winning_priors(data):
             Y[i] = data[i]['white_wins'] / data[i]['rollouts']
     
     return Y
-       
-    
-# ROTATIONS ET SYMETRIES
-def enlarge_dataset(X, Y):
-    
-    enlarged_X = np.copy(X)
-    enlarged_Y = np.copy(Y)
-    
-    N_EXAMPLES = len(X)
-    
-    for i in range(N_EXAMPLES):
-        
-        rot_sym = rot_flip(X[i])
-        
-        # On ajoute les rotations et symétries du plateau i à la fin
-        enlarged_X = np.append(enlarged_X, rot_sym, axis = 0)
-        
-        # On ajoute le label des rotations et symétries du plateau i : même label
-        for k in range(7):
-            enlarged_Y = np.append(enlarged_Y, Y[i])
-            
-    return enlarged_X, enlarged_Y
-        
+
 
 # Crée les rotations et symétries d'un example
 def rot_flip(sample):
@@ -137,7 +260,7 @@ def rot_flip(sample):
     for k in range(0, 3):
         rot = np.empty(shape, dtype = 'int8')
         
-        # Pour chaque feature map du sample (3)
+        # Pour chaque feature map du sample (15)
         for i in range(shape[0]):
             
             rot[i] = np.rot90(sample[i], k + 1, axes=(0, 1))
@@ -161,5 +284,29 @@ def rot_flip(sample):
         toret[3 + k] = sym
     
     return toret
+    
+# Elargit le dataset avec les rotations et symétries de chaque sample
+def enlarge_dataset(X, Y):
+    
+    enlarged_X = np.copy(X)
+    enlarged_Y = np.copy(Y)
+    
+    N_EXAMPLES = len(X)
+    
+    for i in range(N_EXAMPLES):
+        
+        rot_sym = rot_flip(X[i])
+        
+        # On ajoute les rotations et symétries du plateau i à la fin
+        enlarged_X = np.append(enlarged_X, rot_sym, axis = 0)
+        
+        # On ajoute le label des rotations et symétries du plateau i : même label
+        for k in range(7):
+            enlarged_Y = np.append(enlarged_Y, Y[i])
+            
+    return enlarged_X, enlarged_Y
+        
+
+
         
     
