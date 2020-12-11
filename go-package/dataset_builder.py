@@ -90,7 +90,6 @@ def build_dataset(data, board_size):
 def build_goban_from_moves(moves):
     
     board = Goban.Board()
-    valid = True
     
     for move in moves:
         
@@ -100,10 +99,9 @@ def build_goban_from_moves(moves):
         try:
             board.push(Goban.Board.flatten(coord))
         except KeyError:
-            valid = False
-            break
+            return False, None
     
-    return valid, board
+    return True, board
 
 # On construit les goban correspondant à chaque sample
 def build_all_gobans(data):
@@ -121,14 +119,14 @@ def build_all_gobans(data):
 
 
 # Construit les features maps des pierres noires et blanches à partir du board spécifié
-def buid_features_maps_from_board(board):
+def build_features_maps_from_board(board):
     
     blacks = np.zeros((board._BOARDSIZE, board._BOARDSIZE), dtype = 'int8')
     whites = np.zeros((board._BOARDSIZE, board._BOARDSIZE), dtype = 'int8')
     
     for fcoord in range(len(board._board)):
         
-        (col, lin) = Goban.Board.unflatten(fccord)
+        (col, lin) = Goban.Board.unflatten(fcoord)
         
         if board._board[fcoord] == Goban.Board._BLACK:
             
@@ -165,13 +163,13 @@ def build_sample_history(sample, board_size):
     valid, board = build_goban_from_moves(moves)
     
     if not valid:
-        return False, _
+        return False, None
     
-    blacks, whites = build_features_maps_from_board(current_board)
+    blacks, whites = build_features_maps_from_board(board)
     
     if friend == 'black_stones':
         features_maps[0][0] = blacks
-        fetures_maps[0][1] = whites
+        features_maps[0][1] = whites
     else:
         features_maps[0][0] = whites
         features_maps[0][1] = blacks
@@ -183,13 +181,13 @@ def build_sample_history(sample, board_size):
         valid, board = build_goban_from_moves(moves[:-h])
         
         if not valid:
-            return False, _
+            return False, None
         
         blacks, whites = build_features_maps_from_board(board)
         
         if friend == 'black_stones':
             features_maps[0][n] = blacks
-            fetures_maps[0][n+1] = whites
+            features_maps[0][n+1] = whites
         else:
             features_maps[0][n] = whites
             features_maps[0][n+1] = blacks
@@ -209,40 +207,40 @@ def build_dataset_history(data, board_size):
     
     N_EXAMPLES = len(data)
     
-    boards = build_all_gobans(data)
-    
     # 15 feature maps :
     #   - pour n dans [0, 2, 4, 6, 8, 10, 12] :
     #      - Map n : pierres du joueur ami
     #      - Map n+1 : pierres du joueur ennemi
     #   - Map 14 : 1 si ami est noir, 0 sinon
     
-    X = np.empty()
+    X = np.empty((0, 15, board_size, board_size), dtype = 'int8')
+    indexes = []
     
     for i in range(N_EXAMPLES):
         
-        valid, sample = build_sample_history(data[i] board_size)
+        valid, sample_features_maps = build_sample_history(data[i], board_size)
         if valid:
-            X = np.append(X, sample, axis = 0)
+            X = np.append(X, sample_features_maps, axis = 0)
+            indexes.append(i)
                     
-    return X            
+    return X, indexes         
             
         
-
+# Construit la liste des labels/priors : pour chaque example, le ratio de victoire du joueur courant
+def get_winning_priors(data, indexes):
     
-def get_winning_priors(data):
+    Y = np.empty((len(indexes)), dtype = float)
+    k = 0
     
-    N_EXAMPLES = len(data)
-    
-    # Probabilité de gagner pour le joueur courant
-    Y = np.zeros([N_EXAMPLES], dtype = float)
-    
-    for i in range(N_EXAMPLES):
+    for i in indexes:
         
+        # Récupère le ratio de victoire du joueur courant
         if data[i]['depth'] % 2 == 0:
-            Y[i] = data[i]['black_wins'] / data[i]['rollouts']
+            Y[k] = data[i]['black_wins'] / data[i]['rollouts']
         else:
-            Y[i] = data[i]['white_wins'] / data[i]['rollouts']
+            Y[k] = data[i]['white_wins'] / data[i]['rollouts']
+            
+        k += 1
     
     return Y
 
