@@ -2,6 +2,7 @@ import numpy as np
 import gzip, os.path
 import json
 import Goban
+import GnuGo
 
 # Import du fichier d'exemples
 def get_raw_data_go(data_to_predict, output):
@@ -244,6 +245,61 @@ def get_winning_priors(data, indexes):
     
     return Y
 
+# Construit la liste des probabilités pour chaque coup (81 cases + PASS) pour un sample
+def get_sample_probs(sample, gnugo):
+    
+    moves = gnugo.Moves(gnugo)
+    
+    # Joue les moves de la liste dans gnugo
+    for move in sample['list_of_moves']:
+        moves.playthis(move)
+        
+    status, _ = moves._gnugo.query("experimental_score " + moves._nextplayer)
+    
+    if status != "OK":
+        return None
+    
+    status, top_moves = moves._gnugo.query("top_moves " + moves._nexplayer)
+    
+    top_moves = top_moves.strip().split()
+    
+    if len(top_moves) == 0:
+        return None
+    
+    # Récupère la liste des meilleurs coups à jouer
+    best_moves = [move for i, move in enumerate(top_moves) if i % 2 == 0]
+    
+    # Récupère la liste des scores associés aux meilleurs coups
+    scores = np.array([float(score) for i, score in enumerate(top_moves) if i % 2 == 1])
+    
+    assert len(best_moves) == len(scores)
+    
+    probs = scores / scores.sum()
+    sample_probs = np.zeros(82)
+    
+    for i, move in enumerate(best_moves):
+        sample_probs[Goban.name_to_flat(move)] = probs[i]
+    
+    gnugo.query("clear_board")
+    
+    return sample_probs
+
+
+# Construit la liste des probabilités de coups pour chaque sample
+def get_probs(data, indexes):
+    
+    gnugo = GunGo.GnuGo(9)
+    Y = np.empty((len(indexes), 82), dtype = float)
+    k = 0
+    
+    for i in indexes:
+        
+        # Récupère la liste des probabilités que le joueur courant joue chaque coup possible
+        Y[k] = get_sample_probs(data[i], gnugo)
+        k += 1
+        
+    return Y
+
 
 # Crée les rotations et symétries d'un example
 def rot_flip(sample):
@@ -304,7 +360,9 @@ def enlarge_dataset(X, Y):
             
     return enlarged_X, enlarged_Y
         
-
+a = [1, 2, 3]
+a[-1] = 0
+print(a)
 
         
     
