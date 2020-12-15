@@ -105,6 +105,7 @@ def build_goban_from_moves(moves):
     return True, board
 
 # On construit les goban correspondant à chaque sample
+# PAS UTILISEE
 def build_all_gobans(data):
     boards = []
 
@@ -140,11 +141,10 @@ def build_features_maps_from_board(board):
     return blacks, whites
 
 
-# Construit les features maps ami et ennemi de l'historique (7 derniers boards) d'un sample
-def build_sample_history(sample, board_size):
-    
-    moves = sample['list_of_moves']
-    depth = sample['depth']
+# Construit les features maps ami et ennemi de l'historique (7 derniers boards) à partir d'une liste de moves
+def build_history_from_moves(moves, board_size):
+
+    depth = len(moves)
     
     # Détermine la couleur des joueurs ami et ennemi
     if depth % 2 == 0:
@@ -200,8 +200,10 @@ def build_sample_history(sample, board_size):
         features_maps[0][14] = np.ones((board_size, board_size), dtype = 'int8')
         
     return True, features_maps
-        
-        
+
+# Wrapper: Construit les features maps ami et ennemi de l'historique (7 derniers boards) d'un sample
+def build_sample_history(sample, board_size):
+    return build_history_from_moves(sample['list_of_moves'], board_size)
     
 # Construit le dataset avec les boards de l'historique pour chaque sample  
 def build_dataset_history(data, board_size):

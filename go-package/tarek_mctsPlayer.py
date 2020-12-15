@@ -1,19 +1,16 @@
+from multiprocessing import Pool
 from playerInterface import *
 from Goban import Board
-import dataset_builder as db
-import numpy as np
 import random
 import math
 import copy
 import time
-from tensorflow.keras.models import load_model
 
 class myPlayer(PlayerInterface):
 
     def __init__(self):
         self._board = Board()
         self._mycolor = None
-        self._model_priors = load_model('model_priors.h5')
 
     def getPlayerName(self):
         return "Team 38"
@@ -38,20 +35,23 @@ class myPlayer(PlayerInterface):
         else:
             print("I lost :(")
 
-    def select_move(self, board_org, max_time=7.4, temperature=1.2):
+    @staticmethod
+    def select_move(board_org, max_time=7.4, temperature=1.2):
         start_time = time.time()
 
         # Create the root node with legal_moves of the board
-        root = MCTSNode(board_org.weak_legal_moves(), board_org._nextPlayer)
+        root = MCTSNode(board_org.weak_legal_moves())
 
-        # add nodes
+        # add nodes (at least 10,000 rollouts per turn)
+        i=0
+        pool = Pool()
         while(True):
             board = copy.deepcopy(board_org)
             node = root
 
-            # Select a node and play its move: EXPLORATION
+            # Select a node
             while (not node.can_add_child()) and (not board.is_game_over()):
-                node = self.select_child(node, board, temperature)
+                node = myPlayer.select_child(node, board, temperature)
                 #board.push(node.move)
 
             # Add a random child to the node selected if possible
@@ -59,62 +59,50 @@ class myPlayer(PlayerInterface):
                 node = node.add_random_child(board)
                 #board.push(node.move)
 
+            winners = []
+            results = []
 
-            # Construct a sample to be predicted by CNN_priors
-            to_predict = np.empty((0, 15, board._BOARDSIZE, board._BOARDSIZE), dtype = 'int8')
-            valid, sample_features_maps = db.build_history_from_moves(node.list_of_moves, board._BOARDSIZE)
+            # use all cores of the processor to simulate random games from the board
+            for _ in range(pool._processes):
+                results.append(pool.apply_async(myPlayer.simulate_random_game, [board]))
 
-            # If the board is not valid, we consider the node as a loss
-            if not valid:
-                # Backpropagation : update the win ratio of all the previous nodes
-                while node is not None:
-                    node.update_win_rate(0)
-                    node = node.parent
-            
-            else:
-                to_predict = np.append(to_predict, sample_features_maps, axis = 0)
-                # Predict the win_rate from the board
-                prediction = self._model_priors.predict(to_predict)
+            # winner = "1-0" or "0-1"
+            for res in results:
+                winners.append(res.get())
 
-                # Backpropagation : update the win ratio of all the previous nodes
-                while node is not None:
-                    node.update_winrate(prediction)
-                    node = node.parent
+            # Backpropagation : update the win ratio of all the previous nodes
+            while node is not None:
+                for winner in winners:
+                    node.record_win(winner)
+                node = node.parent
 
             # time over
             if (time.time() - start_time >= max_time):
+                print()
                 break
+            i+=pool._processes
+            print("Rounds %d (%f)" % (i,time.time()-start_time), end='\r')
             
-        '''
-        # DEBUG
-        # scored_moves = [win ratio, move, nb rollouts] for each child of the root
-        # sorted by win ratio
+        # debug
         scored_moves = [(child.winning_frac(board_org.next_player()), child.move, child.num_rollouts)
                         for child in root.children]
         scored_moves.sort(key=lambda x: x[0], reverse=True)
-
         for s, m, n in scored_moves[:5]:
-            print('%s - %.3f (%d)' % (m, s, n))'''
-
-
-        # pick best node : EXPLOITATION
+            print('%s - %.3f (%d)' % (m, s, n))
+        # pick best node
         best_move = -1
-        best_ratio = -1.0
-
+        best_pct = -1.0
         for child in root.children:
-            child_ratio = child.winrate()
-
-            if child_ratio > best_ratio:
-                best_ratio = child_ratio
+            child_pct = child.winning_frac(board_org.next_player())
+            if child_pct > best_pct:
+                best_pct = child_pct
                 best_move = child.move
-        print('Select move %s with win pct %.3f' % (best_move, best_ratio))
+        print('Select move %s with win pct %.3f' % (best_move, best_pct))
         return best_move
 
-
-    def select_child(self, node, board, temperature):
-
+    @staticmethod
+    def select_child(node, board, temperature):
         # upper confidence bound for trees (UCT) metric
-        # total_rollouts = node.num_rollouts #???
         total_rollouts = sum(child.num_rollouts for child in node.children)
         log_rollouts = math.log(total_rollouts)
 
@@ -123,7 +111,6 @@ class myPlayer(PlayerInterface):
 
         # loop over each child.
         for child in node.children:
-
             # calculate the UCT score.
             win_percentage = child.winning_frac(board.next_player())
             exploration_factor = math.sqrt(log_rollouts / child.num_rollouts)
@@ -137,15 +124,52 @@ class myPlayer(PlayerInterface):
         board.play_move(best_child.move)
         return best_child
 
+    @staticmethod
+    def simulate_random_game(board):
+        def is_point_an_eye(board, coord):
+            # We must control 3 out of 4 corners if the point is in the middle
+            # of the board; on the edge we must control all corners.
+            friendly_corners = 0
+            off_board_corners = 0
+            i_org = i = board._neighborsEntries[coord]
+            while board._neighbors[i] != -1:
+                n = board._board[board._neighbors[i]]
+                if  n == board.next_player():
+                    return False
+                if (n != Board._EMPTY) or (n != board.next_player()):
+                    friendly_corners += 1
+                i += 1
+            if i >= i_org+4:
+                # Point is in the middle.
+                return friendly_corners >= 3
+            # Point is on the edge or corner.
+            return (4-i_org-i) + friendly_corners == 4
+        # ==============================
+        while not board.is_game_over():
+            moves = board.weak_legal_moves()
+            random.shuffle(moves)
+            valid_move = -1 # PASS
+            for move in moves:
+                if not(is_point_an_eye(board, move)) and (board.play_move(move)):
+                    valid_move = move
+                    break
+            if valid_move == -1:
+                board.play_move(-1)
+        if (board._nbWHITE > board._nbBLACK):
+            return "1-0"
+        elif (board._nbWHITE < board._nbBLACK):
+            return "0-1"
+        else:
+            return "1/2-1/2"
+        #return board.result()
+
 
 
 class MCTSNode():
 
-    def __init__(self, unvisited_moves, color, parent=None, move=None):
+    def __init__(self, unvisited_moves, parent=None, move=None):
         self.parent = parent
         self.move = move
-        self.color = color
-        self.total_win_score = 0
         self.win_counts = {
             Board._BLACK: 0,
             Board._WHITE: 0,
@@ -155,24 +179,21 @@ class MCTSNode():
         self.unvisited_moves = unvisited_moves
         random.shuffle(self.unvisited_moves)
 
-        if parent is None:
-            self.list_of_moves = [move]
-        else:
-            self.list_of_moves = parent.list_of_moves
-            self.list_of_moves.append(move)
-
     def add_random_child(self, board):
         new_move = self.unvisited_moves.pop()
         while (new_move == -1) and (board.play_move(new_move) == False):
             if not self.can_add_child():
                 return self
             new_move = self.unvisited_moves.pop()
-        new_node = MCTSNode(board.weak_legal_moves(), board.flip(board._nextPlayer), self, new_move)
+        new_node = MCTSNode(board.weak_legal_moves(), self, new_move)
         self.children.append(new_node)
         return new_node
 
-    def update_winrate(self, score):
-        self.total_win_score += score
+    def record_win(self, winner):
+        if winner == "1-0": 
+            self.win_counts[Board._WHITE] += 1
+        elif winner == "0-1":
+            self.win_counts[Board._BLACK] += 1
         self.num_rollouts += 1
 
     def can_add_child(self):
@@ -181,5 +202,5 @@ class MCTSNode():
     def is_terminal(self, board):
         return board.is_game_over()
 
-    def winrate(self):
-        return self.total_win_score / self.num_rollouts
+    def winning_frac(self, player):
+        return float(self.win_counts[player]) / float(self.num_rollouts)
