@@ -92,16 +92,17 @@ def build_goban_from_moves(moves):
     
     board = Goban.Board()
     
-    for move in moves:
+    for i,move in enumerate(moves):
         
-        print(move)
-        coord = Goban.Board.name_to_coord(move)
-        
-        # Vérifie que le push du move ne crée pas d'erreur (ex: jouer dans un oeil)
-        try:
-            board.push(Goban.Board.flatten(coord))
-        except KeyError:
-            return False, None
+        if move != None:
+            name = Goban.Board.flat_to_name(move)
+            coord = Goban.Board.name_to_coord(name)
+
+            # Vérifie que le push du move ne crée pas d'erreur (ex: jouer dans un oeil)
+            try:
+                board.push(Goban.Board.flatten(coord))
+            except KeyError:
+                return False, None
     
     return True, board
 
@@ -202,6 +203,7 @@ def build_history_from_moves(moves, board_size):
         
     return True, features_maps
 
+
 # Wrapper: Construit les features maps ami et ennemi de l'historique (7 derniers boards) d'un sample
 def build_sample_history(sample, board_size):
     return build_history_from_moves(sample['list_of_moves'], board_size)
@@ -262,7 +264,7 @@ def get_sample_probs(sample, gnugo):
     if status != "OK":
         return None
     
-    status, top_moves = moves._gnugo.query("top_moves " + moves._nexplayer)
+    status, top_moves = moves._gnugo.query("top_moves " + moves._nextplayer)
     
     top_moves = top_moves.strip().split()
     

@@ -1,5 +1,3 @@
-''' Sorry no comments :).
-'''
 import Goban 
 import importlib
 import time

@@ -57,52 +57,49 @@ class myPlayer(PlayerInterface):
             if node.can_add_child() and not board.is_game_over():
                 node = node.add_random_child(board)
 
-
+                
             # Construct a sample to be predicted by CNN_priors
             to_predict = np.empty((0, 15, board._BOARDSIZE, board._BOARDSIZE), dtype = 'int8')
-            print("list of moves: ", node.list_of_moves)
-            #valid, sample_features_maps = db.build_history_from_moves(node.list_of_moves, board._BOARDSIZE)
-            valid = False
+            valid, sample_features_maps = db.build_history_from_moves(node.list_of_moves, board._BOARDSIZE)
             
             # If the board is not valid, we consider the node as a loss
             if not valid:
                 # Backpropagation : update the win ratio of all the previous nodes
                 while node is not None:
-                    node.update_winrate(0)
+                    node.update_winrate(self._mycolor, 0)
                     node = node.parent
             
             else:
-                to_predict = np.append(to_predict, sample_features_maps, axis = 0)
                 # Predict the win_rate from the board
+                to_predict = np.append(to_predict, sample_features_maps, axis = 0)
+                               
+                # ERROR when loading the model: the predict method does not work
+                # tensorflow.python.framework.errors_impl.UnimplementedError:  The Conv2D op currently only supports the NHWC tensor format on the CPU. The op was given the format: NCHW
+                
+                # It demands a NHWC (batch n, height, width, channels) format instead of a NCHW
+                # BUT the model does not accept the NHWC format either
+                # to_predict = np.transpose(to_predict, (0, 2, 3, 1))
+                # ValueError: Input 0 of layer sequential is incompatible with the layer: expected axis -3 of input shape to have value 15 but received input with shape (None, 9, 9, 15)
+                
+                # => problem during save/load of the model because it works in CNN_priors.ipynb after training the model
+                    
                 prediction = self._model_priors.predict(to_predict)
 
                 # Backpropagation : update the win ratio of all the previous nodes
                 while node is not None:
-                    node.update_winrate(prediction)
+                    node.update_winrate(self._mycolor, prediction)
                     node = node.parent
 
             # time over
             if (time.time() - start_time >= max_time):
                 break
-            
-        '''
-        # DEBUG
-        # scored_moves = [win ratio, move, nb rollouts] for each child of the root
-        # sorted by win ratio
-        scored_moves = [(child.winning_frac(board_org.next_player()), child.move, child.num_rollouts)
-                        for child in root.children]
-        scored_moves.sort(key=lambda x: x[0], reverse=True)
-
-        for s, m, n in scored_moves[:5]:
-            print('%s - %.3f (%d)' % (m, s, n))'''
-
 
         # pick best node : EXPLOITATION
         best_move = -1
         best_ratio = -1.0
 
         for child in root.children:
-            child_ratio = child.winrate()
+            child_ratio = child.winrate(board_org.next_player())
 
             if child_ratio > best_ratio:
                 best_ratio = child_ratio
@@ -125,7 +122,7 @@ class myPlayer(PlayerInterface):
         for child in node.children:
 
             # calculate the UCT score.
-            win_percentage = child.winrate()
+            win_percentage = child.winrate(board.next_player())
             exploration_factor = math.sqrt(log_rollouts / child.num_rollouts)
             uct_score = win_percentage + temperature * exploration_factor
 
@@ -134,7 +131,6 @@ class myPlayer(PlayerInterface):
                 best_score = uct_score
                 best_child = child
 
-        print(best_child.move)
         board.play_move(best_child.move)
         return best_child
 
@@ -146,8 +142,7 @@ class MCTSNode():
         self.parent = parent
         self.move = move
         self.color = color
-        self.total_win_score = 0
-        self.win_counts = {
+        self.total_scores = {
             Board._BLACK: 0,
             Board._WHITE: 0,
         }
@@ -172,8 +167,9 @@ class MCTSNode():
         self.children.append(new_node)
         return new_node
 
-    def update_winrate(self, score):
-        self.total_win_score += score
+    def update_winrate(self, player, score):
+        self.total_scores[player] += score
+        self.total_scores[Board.flip(player)] += (1 - score)
         self.num_rollouts += 1
 
     def can_add_child(self):
@@ -182,5 +178,5 @@ class MCTSNode():
     def is_terminal(self, board):
         return board.is_game_over()
 
-    def winrate(self):
-        return self.total_win_score / self.num_rollouts
+    def winrate(self, player):
+        return float(self.total_scores[player]) / float(self.num_rollouts)

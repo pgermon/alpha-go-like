@@ -73,7 +73,6 @@ class Board:
         if s == 'PASS': return (-1,-1)
         indexLetters = {'A':0, 'B':1, 'C':2, 'D':3, 'E':4, 'F':5, 'G':6, 'H':7, 'J':8}
 
-        print(s)
         col = indexLetters[s[0]]
         lin = int(s[1:]) - 1
         return (col, lin )
