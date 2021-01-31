@@ -1,6 +1,6 @@
 # AlphaGo Like
 Auteurs :  
-[Germon Paul](https://github.com/pgermon) and [Martin Hugo](https://github.com/ScarfZapdos).
+[Germon Paul](https://github.com/pgermon) et [Martin Hugo](https://github.com/ScarfZapdos).
 
 
 ## Principe de fonctionnement
