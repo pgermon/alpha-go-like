@@ -6,17 +6,17 @@ import random
 import math
 import copy
 import time
-from tensorflow.keras.models import load_model
+import tensorflow.keras.models
 
 class myPlayer(PlayerInterface):
 
     def __init__(self):
         self._board = Board()
         self._mycolor = None
-        self._model_priors = load_model('model_priors.h5')
+        self._model_priors = tensorflow.keras.models.load_model('model_priors')
 
     def getPlayerName(self):
-        return "Team 38"
+        return "Paul & Hugo"
 
     def getPlayerMove(self):
         if self._board.is_game_over():
@@ -52,23 +52,23 @@ class myPlayer(PlayerInterface):
             # Select a node and play its move: EXPLORATION
             while (not node.can_add_child()) and (not board.is_game_over()):
                 node = self.select_child(node, board, temperature)
-                #board.push(node.move)
 
             # Add a random child to the node selected if possible
             if node.can_add_child() and not board.is_game_over():
                 node = node.add_random_child(board)
-                #board.push(node.move)
 
 
             # Construct a sample to be predicted by CNN_priors
             to_predict = np.empty((0, 15, board._BOARDSIZE, board._BOARDSIZE), dtype = 'int8')
-            valid, sample_features_maps = db.build_history_from_moves(node.list_of_moves, board._BOARDSIZE)
-
+            print("list of moves: ", node.list_of_moves)
+            #valid, sample_features_maps = db.build_history_from_moves(node.list_of_moves, board._BOARDSIZE)
+            valid = False
+            
             # If the board is not valid, we consider the node as a loss
             if not valid:
                 # Backpropagation : update the win ratio of all the previous nodes
                 while node is not None:
-                    node.update_win_rate(0)
+                    node.update_winrate(0)
                     node = node.parent
             
             else:
@@ -125,7 +125,7 @@ class myPlayer(PlayerInterface):
         for child in node.children:
 
             # calculate the UCT score.
-            win_percentage = child.winning_frac(board.next_player())
+            win_percentage = child.winrate()
             exploration_factor = math.sqrt(log_rollouts / child.num_rollouts)
             uct_score = win_percentage + temperature * exploration_factor
 
@@ -134,6 +134,7 @@ class myPlayer(PlayerInterface):
                 best_score = uct_score
                 best_child = child
 
+        print(best_child.move)
         board.play_move(best_child.move)
         return best_child
 

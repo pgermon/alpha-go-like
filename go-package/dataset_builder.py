@@ -94,6 +94,7 @@ def build_goban_from_moves(moves):
     
     for move in moves:
         
+        print(move)
         coord = Goban.Board.name_to_coord(move)
         
         # Vérifie que le push du move ne crée pas d'erreur (ex: jouer dans un oeil)
@@ -230,7 +231,7 @@ def build_dataset_history(data, board_size):
             
         
 # Construit la liste des labels/priors : pour chaque example, le ratio de victoire du joueur courant
-def get_winning_priors(data, indexes):
+def get_priors(data, indexes):
     
     Y = np.empty((len(indexes)), dtype = float)
     k = 0
@@ -290,26 +291,26 @@ def get_sample_probs(sample, gnugo):
 # Construit la liste des probabilités de coups pour chaque sample
 def get_probs(data, indexes):
     
-    gnugo = GunGo.GnuGo(9)
-    Y = np.empty((len(indexes), 82), dtype = float)
+    gnugo = GnuGo.GnuGo(9)
+    Y_probs = np.empty((len(indexes), 82), dtype = float)
     k = 0
     
     for i in indexes:
         
         # Récupère la liste des probabilités que le joueur courant joue chaque coup possible
-        Y[k] = get_sample_probs(data[i], gnugo)
+        Y_probs[k] = get_sample_probs(data[i], gnugo)
         k += 1
         
-    return Y
+    return Y_probs
 
 
 # Crée les rotations et symétries d'un example
 def rot_flip(sample):
     
-    shape = sample.shape # = (3, 9, 9)
+    shape = sample.shape # = (15, 9, 9)
     
     # Pour un plateau, on ajoute les 7 rotations et symétries existantes
-    # toret.shape = (7, 3, 9, 9)
+    # toret.shape = (7, 15, 9, 9)
     toret = np.zeros([7, shape[0], shape[1], shape[2]], dtype = 'int8')
     
     # Ajout des 3 rotations de 90° des plateaux
@@ -333,7 +334,7 @@ def rot_flip(sample):
             if k == 3:
                 sym[i] = np.flipud(sample[i])
                 
-            # symétries des rotations de 90° calculées
+            # symétries des rotations calculées
             else:
                 sym[i] = np.flipud(toret[k][i])
         
@@ -342,10 +343,13 @@ def rot_flip(sample):
     return toret
     
 # Elargit le dataset avec les rotations et symétries de chaque sample
-def enlarge_dataset(X, Y):
+def enlarge_dataset(X, Y_priors, Y_probs):
     
     enlarged_X = np.copy(X)
-    enlarged_Y = np.copy(Y)
+    enlarged_Y_priors = np.copy(Y_priors)
+    enlarged_Y_probs = np.copy(Y_probs)
+
+    assert len(X) == len(Y_priors) == len(Y_probs)
     
     N_EXAMPLES = len(X)
     
@@ -353,18 +357,78 @@ def enlarge_dataset(X, Y):
         
         rot_sym = rot_flip(X[i])
         
-        # On ajoute les rotations et symétries du plateau i à la fin
+        # Elargissement de X
+        # Ajoute les rotations et symétries du plateau i à la fin
         enlarged_X = np.append(enlarged_X, rot_sym, axis = 0)
         
-        # On ajoute le label des rotations et symétries du plateau i : même label
-        for k in range(7):
-            enlarged_Y = np.append(enlarged_Y, Y[i])
-            
-    return enlarged_X, enlarged_Y
-        
-a = [1, 2, 3]
-a[-1] = 0
-print(a)
+        # Elargissement de Y_priors
+        # Ajoute le label des rotations et symétries du plateau i : même label
+        for _ in range(7):
+            enlarged_Y_priors = np.append(enlarged_Y_priors, Y_priors[i])
 
-        
+        # Elargissement de Y_probs
+        # Ajoute les 3 rotations
+        for k in range(3):
+            enlarged_Y_probs = np.append(enlarged_Y_probs,
+                                         rotate_probs(enlarged_Y_probs[i], k+1, board_size), axis = 0)
+
+        # Ajoute les 4 symétries
+        for k in range(4):
+
+            # Symétrie du sample d'origine
+            if k == 3:
+                enlarged_Y_probs = np.append(enlarged_Y_probs,
+                                             flip_probs(enlarged_Y_probs[i], board_size), axis = 0)
+
+            # Symétrie des rotations calculées
+            else:
+                enlarged_Y_probs = np.append(enlarged_Y_probs,
+                                             flip_probs(enlarged_Y_probs[N_SAMPLES + i * 7 + k], board_size), axis = 0)
+            
+    return enlarged_X, enlarged_Y_priors, enlarged_Y_probs
+
+
+# Construit une rotation de rot*90 degrés du tableau de probabilités probs 
+def rotate_probs(probs, rot, board_size):
+    # probs.shape = (82,) : probas des 81 cases du board + PASS
+
+    # Copie les 81 premières valeurs
+    rot_probs = np.copy(probs[:-1])
+
+    # Reshape en forme (9, 9)
+    rot_probs = np.reshape(rot_probs, (board_size, board_size))
+
+    # Effectue la rotation
+    rot_probs = np.rot90(rot_probs, rot, axes=(0, 1))
     
+    # Reshape à la forme d'origine (81,)
+    rot_probs = np.reshape(rot_probs, board_size**2)
+
+    # Ajoute la proba de PASS --> (82,)
+    rot_probs = np.append(rot_probs, probs[-1])
+
+    return rot_probs
+
+
+# Construit une symétrie du tableau de probabilités probs 
+def flip_probs(probs, board_size):
+    # probs.shape = (82,) : probas des 81 cases du board + PASS
+
+    # Copie les 81 premières valeurs
+    sym_probs = np.copy(probs[:-1])
+
+    # Reshape en forme (9, 9)
+    sym_probs = np.reshape(sym_probs, (board_size, board_size))
+
+    # Effectue la symétrie verticale
+    sym_probs = np.flipud(sym_probs)
+
+    # Reshape à la forme d'origine (81,)
+    sym_probs = np.reshape(sym_probs, board_size**2)
+
+    # Ajoute la proba de PASS --> (82,)
+    sym_probs = np.append(sym_probs, probs[-1])
+
+    return sym_probs
+
+  
